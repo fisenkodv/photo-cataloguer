@@ -7,11 +7,11 @@
  ```
  - Create an environment
 ```
-$ virtualenv ENV
+$ virtualenv venv
 ```
 - Activate script
 ```
-$ source [ENV]/bin/activate
+$ source venv/bin/activate
 ``` 
 - Install dependencies
 ```

@@ -43,6 +43,29 @@ class GoogleDriveFolderInfo(object):
     def add_folder(self, folder_info):
         self.folder_infos.append(folder_info)
 
+    def get_files(self, recursive=False):
+        """
+        :param recursive: boolean
+        """
+        file_infos = []
+        file_infos.extend(self.file_infos)
+        if recursive:
+            for folder_info in self.folder_infos:
+                file_infos.extend(folder_info.get_files(True))
+        return file_infos
+
+    def get_folder(self, folder_name):
+        found_folders = [folder_info for folder_info in self.folder_infos if folder_info.folder_name == folder_name]
+        return found_folders[0] if len(found_folders) == 1 else None
+
+    def file_exists(self, file_info):
+        """
+        :param file_info: GoogleDriveFileInfo
+        :return: bool
+        """
+        file_infos = [x for x in self.get_files(False) if x.file_name == file_info.file_name]
+        return True if len(file_infos) != 0 else False
+
     def __str__(self):
         out_str = '{0}.{1}\n'.format(self.folder_id, self.folder_name)
         for file_info in self.file_infos:
@@ -53,7 +76,7 @@ class GoogleDriveFolderInfo(object):
 
 
 class GoogleDriveClient(object):
-    SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly'
+    SCOPES = 'https://www.googleapis.com/auth/drive'
     CLIENT_SECRET_FILE = 'client_secret.json'
     APPLICATION_NAME = 'Photo Cataloguer'
     service = None
@@ -61,11 +84,32 @@ class GoogleDriveClient(object):
     def __init__(self):
         pass
 
-    def get_directory_info(self, folder_name='root'):
-        folder_id = self.__get_folder_id(folder_name)
-        folder = GoogleDriveFolderInfo(folder_id, folder_name, [], [])
+    def get_folder_info(self, directory_name='root'):
+        folder_id = self.__get_folder_id(directory_name)
+        folder = GoogleDriveFolderInfo(folder_id, directory_name, [], [])
         self.__traverse_folder(folder_id, folder)
         return folder
+
+    def create_folder(self, folder_name, parent_folder_id):
+        file_metadata = {
+            'title': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [{'id': parent_folder_id}]
+        }
+        service = self.__get_service()
+        new_folder = service.files().insert(body=file_metadata, fields='id').execute()
+        folder_info = GoogleDriveFolderInfo(new_folder['id'], folder_name, [], [])
+        return folder_info
+
+    def move_file(self, parent_folder_id, file_id):
+        service = self.__get_service()
+        existing_file = service.files().get(fileId=file_id, fields='parents').execute()
+        previous_parents = ",".join([parent["id"] for parent in existing_file.get('parents')])
+        # Move the existing_file to the new folder
+        existing_file = service.files().update(fileId=file_id,
+                                               addParents=parent_folder_id,
+                                               removeParents=previous_parents,
+                                               fields='id, parents').execute()
 
     def __get_flags(self):
         try:
@@ -156,7 +200,7 @@ class GoogleDriveClient(object):
                     if self.__is_image(item['mimeType']):
                         folder_info.add_file(GoogleDriveFileInfo(item['id'], item['title'], item['imageMediaMetadata']))
                     else:
-                        folder = GoogleDriveFolderInfo(item['id'], item['title'])
+                        folder = GoogleDriveFolderInfo(item['id'], item['title'], [], [])
                         folder_info.add_folder(folder)
                         self.__traverse_folder(child['id'], folder)
                 page_token = children.get('nextPageToken')
@@ -167,15 +211,49 @@ class GoogleDriveClient(object):
                 break
 
 
+class Cataloguer(object):
+    def __init__(self, mobile_photos_path, target_photos_path):
+        self.mobile_photos_path = mobile_photos_path
+        self.target_photos_path = target_photos_path
+        self.client = GoogleDriveClient()
+
+    def catalogue(self):
+        source_directory = self.client.get_folder_info('SOURCE')
+        target_directory = self.client.get_folder_info('TARGET')
+        source_files = source_directory.get_files(True)
+
+        for file_info in source_files:
+            date_taken = file_info.get_date_taken()
+            print('{0}/{1}/{2}'.format(
+                str(date_taken.year).zfill(4),
+                str(date_taken.month).zfill(2),
+                str(date_taken.day).zfill(2)))
+
+            year_folder = self.__get_folder(target_directory, str(date_taken.year).zfill(4))
+            month_folder = self.__get_folder(year_folder, str(date_taken.month).zfill(2))
+            day_folder = self.__get_folder(month_folder, str(date_taken.day).zfill(2))
+            if day_folder.file_exists(file_info):
+                print('File "{0}" already exists'.format(file_info))
+            else:
+                print('Move "{0}"'.format(file_info))
+                self.client.move_file(day_folder.folder_id, file_info.file_id)
+
+    def __get_folder(self, parent_folder, folder_name):
+        """
+        :param parent_folder: GoogleDriveFolderInfo
+        :param folder_name: str
+        :return: GoogleDriveFolderInfo
+        """
+        folder = parent_folder.get_folder(folder_name)
+        if folder is None:
+            print('Create folder "{0}"'.format(folder_name))
+            folder = self.client.create_folder(folder_name, parent_folder.folder_id)
+            parent_folder.add_folder(folder)
+        return folder
+
+
 if __name__ == '__main__':
     # mobile_photos_path = input('Mobile photos path: ') or 'Google Photos'
-    #    target_photos_path = input('Path to move photos: ') or ''
-    client = GoogleDriveClient()
-    source_directory = client.get_directory_info('TEST')
-    target_directory = client.get_directory_info('OUTPUT')
-
-    print(source_directory)
-    print(target_directory)
-    # files = client.get_folder(mobile_photos_path)
-    # print(files)
-    # print(mobile_photos_path)
+    # target_photos_path = input('Path to move photos: ') or ''
+    cataloguer = Cataloguer('SOURCE', 'TARGET')
+    cataloguer.catalogue()
