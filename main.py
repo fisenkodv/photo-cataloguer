@@ -1,9 +1,9 @@
 #!/usr/bin/python
 from __future__ import print_function
 import os
-import datetime
 import argparse
 import httplib2
+import dateutil.parser
 
 from apiclient import discovery
 from apiclient import errors
@@ -13,13 +13,16 @@ from oauth2client.file import Storage
 
 
 class GoogleDriveFileInfo(object):
-    def __init__(self, file_id, file_name, image_metadata):
+    def __init__(self, file_id, file_name, metadata):
         self.file_id = file_id
         self.file_name = file_name
-        self.image_metadata = image_metadata
+        self.metadata = metadata
+
+    def can_be_moved(self):
+        return 'date' in self.metadata
 
     def get_date_taken(self):
-        return datetime.datetime.strptime(self.image_metadata['date'], '%Y:%m:%d %H:%M:%S')
+        return dateutil.parser.parse(self.metadata['date'])
 
     def __str__(self):
         return '{0}.{1}'.format(self.file_id, self.file_name)
@@ -177,8 +180,8 @@ class GoogleDriveClient(object):
     def __is_folder(self, mime_type):
         return mime_type == 'application/vnd.google-apps.folder'
 
-    def __is_image(self, mime_type):
-        return 'image/' in mime_type
+    def __is_supported_media(self, mime_type):
+        return 'image/' in mime_type or 'video/' in mime_type
 
     def __traverse_folder(self, folder_id, folder_info):
         """
@@ -197,8 +200,11 @@ class GoogleDriveClient(object):
 
                 for child in children.get('items', []):
                     item = self.__get_item(child['id'])
-                    if self.__is_image(item['mimeType']):
-                        folder_info.add_file(GoogleDriveFileInfo(item['id'], item['title'], item['imageMediaMetadata']))
+                    if self.__is_supported_media(item['mimeType']):
+                        metadata = {'date': item['createdDate']};
+                        if 'imageMediaMetadata' in item:
+                            metadata = dict(metadata.items() + item['imageMediaMetadata'].items())
+                        folder_info.add_file(GoogleDriveFileInfo(item['id'], item['title'], metadata))
                     else:
                         folder = GoogleDriveFolderInfo(item['id'], item['title'], [], [])
                         folder_info.add_folder(folder)
@@ -212,17 +218,19 @@ class GoogleDriveClient(object):
 
 
 class Cataloguer(object):
-    def __init__(self, mobile_photos_path, target_photos_path):
-        self.mobile_photos_path = mobile_photos_path
+    def __init__(self, source_photos_path, target_photos_path):
+        self.source_photos_path = source_photos_path
         self.target_photos_path = target_photos_path
         self.client = GoogleDriveClient()
 
     def catalogue(self):
-        source_directory = self.client.get_folder_info('SOURCE')
-        target_directory = self.client.get_folder_info('TARGET')
+        source_directory = self.client.get_folder_info(self.source_photos_path)
+        target_directory = self.client.get_folder_info(self.target_photos_path)
         source_files = source_directory.get_files(True)
 
         for file_info in source_files:
+            if file_info.can_be_moved() is False:
+                continue
             date_taken = file_info.get_date_taken()
             print('{0}/{1}/{2}'.format(
                 str(date_taken.year).zfill(4),
@@ -255,5 +263,5 @@ class Cataloguer(object):
 if __name__ == '__main__':
     # mobile_photos_path = input('Mobile photos path: ') or 'Google Photos'
     # target_photos_path = input('Path to move photos: ') or ''
-    cataloguer = Cataloguer('SOURCE', 'TARGET')
+    cataloguer = Cataloguer('Google Photos', 'TARGET')
     cataloguer.catalogue()
