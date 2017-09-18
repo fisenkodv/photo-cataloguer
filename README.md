@@ -22,3 +22,6 @@ $ pip install -r requirements.txt
 ```
 $ deactivate
 ```
+
+# Licence 
+MIT
