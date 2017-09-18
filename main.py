@@ -261,7 +261,10 @@ class Cataloguer(object):
 
 
 if __name__ == '__main__':
-    # mobile_photos_path = input('Mobile photos path: ') or 'Google Photos'
-    # target_photos_path = input('Path to move photos: ') or ''
-    cataloguer = Cataloguer('Google Photos', 'TARGET')
-    cataloguer.catalogue()
+    mobile_photos_path = input('Mobile photos path: ') or 'Google Photos'
+    target_photos_path = input('Path to move photos: ') or ''
+    if target_photos_path:
+        cataloguer = Cataloguer(mobile_photos_path, target_photos_path)
+        cataloguer.catalogue()
+    else:
+        pass
